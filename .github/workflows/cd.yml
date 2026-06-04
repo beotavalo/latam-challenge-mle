@@ -22,6 +22,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # TEMPORARY diagnostic: reveals the exact bytes of the WIF inputs (these
+      # are non-secret, repo-locked identifiers) to debug the "Invalid audience"
+      # error. Remove once auth works.
+      - name: Inspect WIF inputs (temporary debug)
+        env:
+          WIP: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SA: ${{ secrets.GCP_DEPLOYER_SA }}
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+        run: |
+          echo "WIP length: $(printf %s "$WIP" | wc -c)"
+          echo "WIP bytes:"; printf %s "$WIP" | od -An -c
+          case "$WIP" in
+            projects/*/locations/global/workloadIdentityPools/*/providers/*) echo "FORMAT: PROVIDER name (expected)";;
+            projects/*/locations/global/workloadIdentityPools/*) echo "FORMAT: POOL name — MISSING /providers/<id>";;
+            "") echo "FORMAT: EMPTY";;
+            *) echo "FORMAT: unexpected";;
+          esac
+          echo "SA length: $(printf %s "$SA" | wc -c)"
+          echo "PROJECT length: $(printf %s "$PROJECT" | wc -c); REGION='$REGION'"
+
       - name: Authenticate to Google Cloud (Workload Identity Federation)
         uses: google-github-actions/auth@v2
         with:
