@@ -45,6 +45,9 @@ dev = [
 target-version = "py310"
 line-length = 100
 src = ["challenge", "tests"]
+# The provided exploration notebook is the DS's artifact and is kept verbatim
+# (we must not change the challenge files), so it is excluded from linting.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 # pycodestyle (E,W), pyflakes (F), isort (I), pyupgrade (UP), flake8-bugbear (B)
