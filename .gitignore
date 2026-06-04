@@ -5,3 +5,18 @@ plan/
 .vscode/
 .venv/
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Coverage / test reports
+.coverage
+coverage.xml
+reports/
+
+# MLflow experiment tracking store
+mlruns/
+mlartifacts/
