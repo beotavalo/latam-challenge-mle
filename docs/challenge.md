@@ -160,7 +160,44 @@ Once deployed, the Cloud Run URL goes into `Makefile` line 26 (`STRESS_URL`) and
 `make stress-test` runs against the live service.
 
 ## Part IV — CI/CD
-_To be completed in LT-MLE-006._
+
+Two GitHub Actions workflows under `.github/workflows/`:
+
+### `ci.yml` — Continuous Integration
+Runs on pushes/PRs to `main`/`develop`:
+1. Install **uv** (Python 3.10) and the runtime + test dependencies.
+2. **Lint** with `ruff check challenge`.
+3. **`make model-test`** and **`make api-test`** (the same targets graders use).
+4. Upload the coverage report as an artifact.
+
+### `cd.yml` — Continuous Delivery
+Runs on push to `main` (and `workflow_dispatch`), in the protected `production`
+GitHub environment:
+1. **Authenticate to GCP keylessly** via Workload Identity Federation
+   (`permissions: id-token: write`) — no service-account key.
+2. **Build & push** the image to Artifact Registry, tagged with the commit SHA.
+3. **`terraform apply -refresh=false`** to roll the new image onto the existing
+   Cloud Run service. `-refresh=false` keeps it a single, image-only change so the
+   deployer SA needs only `run.admin` + `serviceAccountUser` (it cannot modify
+   IAM/WIF/SAs — least privilege; see [ADR-003](#adr-003--secrets--cd-authentication)).
+4. Publish the live Cloud Run URL to the job summary.
+
+### Required GitHub secrets (set in the `production` environment)
+`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOYER_SA`,
+`TF_STATE_BUCKET` — all produced by the Terraform bootstrap (see
+`infrastructure/README.md`). WIF is keyless, so none is a credential file.
+
+### One extra grant for CD
+Because the Terraform **state bucket** is created out-of-band (not managed by the
+config), grant the deployer SA access to it once:
+```bash
+gcloud storage buckets add-iam-policy-binding gs://TF_STATE_BUCKET \
+  --member="serviceAccount:DEPLOYER_SA_EMAIL" \
+  --role="roles/storage.objectAdmin"
+```
+
+After the first successful deploy, the Cloud Run URL is placed in `Makefile`
+line 26 (`STRESS_URL`) so `make stress-test` runs against the live service.
 
 ---
 
@@ -206,6 +243,13 @@ leaking. A SA-key JSON (`GCP_SA_KEY`) remains a documented fallback only if WIF
 is unavailable.
 **Consequences:** a one-time bootstrap `terraform apply` (by a project owner)
 must create the WIF pool/provider before CD can authenticate.
+**Least-privilege deploys:** CD runs `terraform apply -refresh=false` to make an
+image-only change, so the deployer SA holds only `run.admin`,
+`iam.serviceAccountUser`, `artifactregistry.writer` (+ object access to the state
+bucket) — it cannot alter IAM, WIF or service accounts. For maximum hardening the
+config could be split into an owner-applied `bootstrap` module and a CD-applied
+`service` module; the `-refresh=false` approach achieves a similar privilege
+boundary without that extra structure.
 
 ### ADR-004 — Toolchain: Python 3.10 + uv + ruff
 **Status:** Accepted. The provided dependency pins (pandas 1.3.5, numpy 1.22.4,
