@@ -1,0 +1,84 @@
+name: 'Continuous Delivery'
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Avoid overlapping deploys racing on the same Cloud Run service / TF state.
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, push & deploy to Cloud Run
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # required for keyless Workload Identity Federation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ secrets.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        env:
+          REGION: ${{ secrets.GCP_REGION }}
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/flight-delay/flight-delay-api:${GITHUB_SHA}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infrastructure
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=flight-delay-api"
+
+      # Roll the new image onto the existing Cloud Run service. -refresh=false
+      # keeps this a single, image-only change, so the deployer SA needs only
+      # run.admin + serviceAccountUser (it cannot touch IAM/WIF/SAs — see ADR-003).
+      - name: Terraform apply (deploy image)
+        working-directory: infrastructure
+        env:
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+        run: |
+          terraform apply -auto-approve -refresh=false \
+            -var="project_id=${PROJECT}" \
+            -var="region=${REGION}" \
+            -var="github_repository=${GITHUB_REPOSITORY}" \
+            -var="image=${IMAGE}"
+
+      - name: Publish service URL
+        working-directory: infrastructure
+        run: |
+          URL="$(terraform output -raw cloud_run_url)"
+          echo "Deployed to: $URL"
+          {
+            echo "### ✅ Deployed to Cloud Run"
+            echo ""
+            echo "- URL: $URL"
+            echo "- Image tag: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

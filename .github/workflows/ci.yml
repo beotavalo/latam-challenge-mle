@@ -1,0 +1,47 @@
+name: 'Continuous Integration'
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.10'
+
+      - name: Create virtualenv and install dependencies
+        run: |
+          uv venv --python 3.10
+          uv pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Lint (ruff)
+        run: uvx ruff@0.7.4 check challenge
+
+      - name: Model tests (make model-test)
+        run: |
+          source .venv/bin/activate
+          make model-test
+
+      - name: API tests (make api-test)
+        run: |
+          source .venv/bin/activate
+          make api-test
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: reports/
+          if-no-files-found: ignore

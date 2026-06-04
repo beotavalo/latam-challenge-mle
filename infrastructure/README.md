@@ -62,6 +62,16 @@ The CD pipeline (LT-MLE-006) reads these — **no values are committed**:
 WIF is keyless, so none of these is a credential file. (A service-account JSON
 key stored as `GCP_SA_KEY` is the fallback if WIF can't be used.)
 
+### One extra grant for CD (state bucket access)
+The state bucket is created out-of-band (Step 0), so grant the deployer SA
+access to it once — the CD `terraform init/apply` reads and writes state there:
+
+```bash
+gcloud storage buckets add-iam-policy-binding gs://<TF_STATE_BUCKET> \
+  --member="serviceAccount:$(terraform output -raw deployer_service_account)" \
+  --role="roles/storage.objectAdmin"
+```
+
 ## How CD deploys (LT-MLE-006)
 1. Authenticate to GCP via WIF (`google-github-actions/auth`).
 2. Build the image and push to Artifact Registry.
