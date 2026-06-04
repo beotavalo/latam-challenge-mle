@@ -128,7 +128,36 @@ fixed 10-feature frame via `DelayModel.preprocess` and scored with `predict`.
 **Tests:** `make api-test` → **4 passed** (the valid case plus the three 400 cases).
 
 ## Part III — Cloud deployment
-_To be completed in LT-MLE-005._
+
+The API is containerized and deployed to **GCP Cloud Run** via **Terraform**
+(`infrastructure/`), with the actual rollout driven by the CD pipeline (Part IV).
+
+### Container
+- `Dockerfile`: `python:3.10-slim`, installs **only** `requirements.txt` (no
+  mlflow/xgboost/ruff) for a lean image and fast cold-starts, runs as a non-root
+  user, and binds uvicorn to Cloud Run's `$PORT`. A `.dockerignore` keeps the
+  notebook, training script, tests and docs out of the image.
+- Verified locally: `docker build` + `docker run` → `/health` and `/predict`
+  return 200 with correct predictions.
+
+### Rate limiting & safety
+- Per-IP rate limiting via **slowapi**, configured by the `RATE_LIMIT` env var
+  (e.g. `120/minute`). It is **disabled by default** so `make stress-test` can
+  saturate the API; the real overload/cost guardrail is Cloud Run
+  `max_instances` (plus `min_instances = 0` to scale to zero when idle).
+
+### Infrastructure as code (`infrastructure/`)
+Terraform provisions: Artifact Registry (Docker), a least-privilege **runtime
+service account**, a **deployer service account**, and **Workload Identity
+Federation** so GitHub Actions authenticates **keylessly** (no SA-key secret).
+Remote state lives in GCS. The Cloud Run service is public
+(`allUsers` → `roles/run.invoker`) so the airport team and the stress test can
+reach it. See `infrastructure/README.md` for the one-time bootstrap and the list
+of GitHub secrets. See [ADR-002](#adr-002--cloud-platform).
+
+### Stress test
+Once deployed, the Cloud Run URL goes into `Makefile` line 26 (`STRESS_URL`) and
+`make stress-test` runs against the live service.
 
 ## Part IV — CI/CD
 _To be completed in LT-MLE-006._
@@ -153,14 +182,30 @@ future data shifts favor it, the registry + `train.py` make swapping the champio
 a one-line change.
 
 ### ADR-002 — Cloud platform
-**Status:** Proposed (Part III). Deploy on **GCP Cloud Run** — pay-per-use and
-scale-to-zero is the cheapest option for a low-traffic API that must stay live
-for ~1 week. Details in LT-MLE-005.
+**Status:** Accepted.
+**Decision:** deploy on **GCP Cloud Run**, provisioned with **Terraform**.
+**Why:** pay-per-use with **scale-to-zero** is the cheapest option for a
+low-traffic API that must stay live ~1 week (a Compute Engine VM bills 24/7 even
+when idle); it provides managed HTTPS and autoscaling out of the box. Terraform
+makes the whole environment reproducible and reviewable, and the same config is
+reused by CD.
+**Consequences:** cold-starts on the first request after idle — mitigated by the
+lean image; `max_instances` caps cost; `min_instances` can be raised if cold
+starts matter during the demo week.
 
-### ADR-003 — Secrets & CD
-**Status:** Proposed (Part IV). Credentials are provided via **GitHub Actions
-secrets** (Workload Identity Federation preferred over long-lived SA keys); no
-secret values are committed. Details in LT-MLE-006.
+### ADR-003 — Secrets & CD authentication
+**Status:** Accepted.
+**Decision:** GitHub Actions authenticates to GCP with **Workload Identity
+Federation** (OIDC) impersonating a least-privilege **deployer** service account;
+the WIF provider is restricted to this repository. **No service-account key** is
+stored. Non-secret config (project id, region, WIF provider name, deployer SA
+email, state bucket) is provided as GitHub Actions secrets/variables; nothing is
+committed.
+**Why:** eliminates long-lived credentials — the highest-value secret to avoid
+leaking. A SA-key JSON (`GCP_SA_KEY`) remains a documented fallback only if WIF
+is unavailable.
+**Consequences:** a one-time bootstrap `terraform apply` (by a project owner)
+must create the WIF pool/provider before CD can authenticate.
 
 ### ADR-004 — Toolchain: Python 3.10 + uv + ruff
 **Status:** Accepted. The provided dependency pins (pandas 1.3.5, numpy 1.22.4,

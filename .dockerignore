@@ -1,0 +1,25 @@
+# Keep the build context (and image) small: only requirements.txt + challenge/
+# are needed to serve the model.
+.git
+.github
+.venv
+.claude
+.vscode
+plan
+docs
+tests
+infrastructure
+reports
+mlruns
+mlartifacts
+mlflow.db
+data
+**/__pycache__
+*.pyc
+.pytest_cache
+.coverage
+coverage.xml
+# Dev/experiment-only files inside the package — not needed to serve.
+challenge/exploration.ipynb
+challenge/train.py
+*.md

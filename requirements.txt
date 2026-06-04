@@ -9,3 +9,5 @@ numpy~=1.22.4
 pandas~=1.3.5
 scikit-learn~=1.3.0
 joblib~=1.3.0
+# Per-IP rate limiting for the public API (abuse protection).
+slowapi~=0.1.9

@@ -21,3 +21,11 @@ reports/
 mlruns/
 mlartifacts/
 mlflow.db
+
+# Terraform (track .terraform.lock.hcl for reproducible provider versions)
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example
