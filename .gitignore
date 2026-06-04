@@ -1,2 +1,7 @@
 __MACOSX/
 .DS_Store
+plan/
+.claude/
+.vscode/
+.venv/
+.env
