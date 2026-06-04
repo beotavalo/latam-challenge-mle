@@ -61,7 +61,9 @@ the challenge explicitly does not ask for model improvements.
 
 ![Model comparison](assets/model_selection/model_comparison.png)
 
-<!-- Optional: MLflow UI screenshot of the experiment runs can be added here. -->
+MLflow tracking UI for the `scl-flight-delay--model-selection` experiment:
+
+![MLflow runs](assets/model_selection/mlflow_runs.png)
 
 **Findings (which confirm the DS's conclusions):**
 - Without balancing, both models collapse to predicting "on-time" almost always
@@ -100,7 +102,30 @@ quality, but LogisticRegression is **~260× smaller** (0.96 KB vs 250 KB) and
 ---
 
 ## Part II — API
-_To be completed in LT-MLE-004._
+
+The model is served with **FastAPI** (`challenge/api.py`):
+
+- `GET /health` → `{"status": "OK"}` (liveness probe).
+- `POST /predict` accepts a batch:
+  ```json
+  { "flights": [ { "OPERA": "Grupo LATAM", "TIPOVUELO": "N", "MES": 3 } ] }
+  ```
+  and returns `{ "predict": [0] }`.
+
+**Input validation** uses Pydantic models with field validators:
+- `MES` ∈ 1..12,
+- `TIPOVUELO` ∈ {`I`, `N`},
+- `OPERA` ∈ the 23 airlines seen in training (`KNOWN_OPERA`).
+
+Any invalid field returns **HTTP 400**. FastAPI/Pydantic raise `422` by default, so
+a `RequestValidationError` handler maps validation failures to `400`, as the tests
+require.
+
+The `DelayModel` is instantiated once at start-up and loads `challenge/model.joblib`,
+so the API serves immediately without retraining. Requests are turned into the
+fixed 10-feature frame via `DelayModel.preprocess` and scored with `predict`.
+
+**Tests:** `make api-test` → **4 passed** (the valid case plus the three 400 cases).
 
 ## Part III — Cloud deployment
 _To be completed in LT-MLE-005._
