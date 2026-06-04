@@ -36,6 +36,8 @@ dev = [
     "ruff>=0.6,<0.8",
     "mlflow~=2.9",
     "xgboost~=2.0",
+    # mlflow model logging imports pkg_resources, removed by setuptools 81+.
+    "setuptools<81",
 ]
 
 [tool.ruff]
