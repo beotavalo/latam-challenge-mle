@@ -23,6 +23,20 @@ install:		## Install dependencies
 	pip install -r requirements-test.txt
 	pip install -r requirements.txt
 
+.PHONY: uv-venv
+uv-venv:		## Create a reproducible env with uv (Python 3.10) and install all deps
+	uv venv --python 3.10
+	uv pip install -r requirements.txt -r requirements-test.txt -r requirements-dev.txt
+
+.PHONY: lint
+lint:			## Lint our source with ruff (provided test files are left untouched)
+	uv run ruff check challenge
+
+.PHONY: format
+format:			## Auto-format our source with ruff
+	uv run ruff format challenge
+	uv run ruff check --fix challenge
+
 STRESS_URL = http://127.0.0.1:8000 
 .PHONY: stress-test
 stress-test:
