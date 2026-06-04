@@ -20,3 +20,4 @@ reports/
 # MLflow experiment tracking store
 mlruns/
 mlartifacts/
+mlflow.db

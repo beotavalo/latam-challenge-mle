@@ -632,6 +632,7 @@ dev = [
     { name = "mlflow" },
     { name = "ruff" },
     { name = "seaborn" },
+    { name = "setuptools" },
     { name = "xgboost" },
 ]
 test = [
@@ -660,6 +661,7 @@ dev = [
     { name = "mlflow", specifier = "~=2.9" },
     { name = "ruff", specifier = ">=0.6,<0.8" },
     { name = "seaborn", specifier = "~=0.12.2" },
+    { name = "setuptools", specifier = "<81" },
     { name = "xgboost", specifier = "~=2.0" },
 ]
 test = [
@@ -1272,6 +1274,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8a/77/5cde8bc47df770486acf64f550839b4136d1696e5e4d57ce33fa1823972b/seaborn-0.12.2.tar.gz", hash = "sha256:374645f36509d0dcab895cba5b47daf0586f77bfe3b36c97c607db7da5be0139", size = 1439798 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/2e/17bbb83fbf102687bb2aa3d808add39da820a7698159302a1a69bb82e01c/seaborn-0.12.2-py3-none-any.whl", hash = "sha256:ebf15355a4dba46037dfd65b7350f014ceb1f13c05e814eda2c9f5fd731afc08", size = 293284 },
+]
+
+[[package]]
+name = "setuptools"
+version = "80.10.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/95/faf61eb8363f26aa7e1d762267a8d602a1b26d4f3a1e758e92cb3cb8b054/setuptools-80.10.2.tar.gz", hash = "sha256:8b0e9d10c784bf7d262c4e5ec5d4ec94127ce206e8738f29a437945fbc219b70", size = 1200343 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/b8/f1f62a5e3c0ad2ff1d189590bfa4c46b4f3b6e49cef6f26c6ee4e575394d/setuptools-80.10.2-py3-none-any.whl", hash = "sha256:95b30ddfb717250edb492926c92b5221f7ef3fbcc2b07579bcd4a27da21d0173", size = 1064234 },
 ]
 
 [[package]]
