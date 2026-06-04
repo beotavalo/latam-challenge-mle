@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit real values / secrets.
+project_id        = "your-gcp-project-id"
+region            = "us-central1"
+github_repository = "beotavalo/latam-challenge-mle"
+
+# Leave rate_limit empty while running `make stress-test` (so Cloud Run
+# autoscaling, not a per-IP cap, absorbs the load). Set it for the public week:
+# rate_limit = "120/minute"
+
+# Cost guardrails (scale-to-zero by default):
+# min_instances = 0
+# max_instances = 3

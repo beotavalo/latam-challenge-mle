@@ -12,6 +12,8 @@ not FastAPI's default 422 — see the exception handler below).
 
 from __future__ import annotations
 
+import os
+
 import fastapi
 import pandas as pd
 from fastapi import status
@@ -19,6 +21,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, validator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from challenge.model import DelayModel
 
@@ -53,6 +59,20 @@ KNOWN_OPERA = frozenset(
 VALID_TIPOVUELO = frozenset({"I", "N"})
 
 app = fastapi.FastAPI(title="SCL Flight Delay Prediction API", version="1.0.0")
+
+# Per-client-IP rate limiting (basic abuse protection for the public endpoint).
+# Configured via the RATE_LIMIT env var (e.g. "120/minute"); empty/unset disables
+# it, so the stress test can saturate the API and Cloud Run autoscaling — not a
+# per-IP cap — is what protects against overload. See infrastructure/ for caps.
+_RATE_LIMIT = os.getenv("RATE_LIMIT", "").strip()
+limiter = Limiter(
+    key_func=get_remote_address,
+    enabled=bool(_RATE_LIMIT),
+    default_limits=[_RATE_LIMIT] if _RATE_LIMIT else [],
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Load the champion model once at start-up (artifact is loaded in __init__).
 model = DelayModel()
