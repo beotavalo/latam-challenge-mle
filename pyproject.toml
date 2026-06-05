@@ -24,6 +24,13 @@ dependencies = [
 # Mirrors requirements-test.txt
 test = [
     "locust~=1.6",
+    # locust 1.6 needs the pre-2.1 Flask stack (modern Jinja2/itsdangerous/
+    # Werkzeug/MarkupSafe dropped symbols it imports).
+    "Flask<2.1",
+    "Werkzeug<2.1",
+    "Jinja2<3.1",
+    "itsdangerous<2.1",
+    "MarkupSafe<2.1",
     "coverage~=5.5",
     "pytest~=6.2.5",
     "pytest-cov~=2.12.1",
