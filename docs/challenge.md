@@ -59,11 +59,22 @@ the challenge explicitly does not ask for model improvements.
 | `logreg-plain-top10`     | 0.013 | 0.025 | 0.640 | 0.282 | 0.95 KB | 0.06 s |
 | `xgboost-plain-top10`    | 0.006 | 0.012 | 0.642 | 0.287 | 241 KB | 0.21 s |
 
-![Model comparison](assets/model_selection/model_comparison.png)
+**Figure 1 — Per-class scores across the four candidates.** The two balanced
+models tie on the delay class; the unbalanced models flatline.
 
-MLflow tracking UI for the `scl-flight-delay--model-selection` experiment:
+![Model comparison bar chart](assets/model_selection/model_comparison.png)
+
+**Figure 2 — MLflow tracking UI** for the `scl-flight-delay--model-selection`
+experiment, showing the four runs, their logged metrics, and the registered
+champion (`flight_delay_logreg` v1.0.0 `@champion`).
 
 ![MLflow runs](assets/model_selection/mlflow_runs.png)
+
+**Figure 3 — Champion confusion matrix** (`logreg-balanced`, validation split):
+class balancing recovers the majority of delayed flights (high class-1 recall) at
+the cost of some false positives — the right trade-off for a delay-warning tool.
+
+![Champion confusion matrix](assets/model_selection/confusion_matrix__logreg-balanced-top10.png)
 
 **Findings (which confirm the DS's conclusions):**
 - Without balancing, both models collapse to predicting "on-time" almost always
@@ -155,9 +166,25 @@ Remote state lives in GCS. The Cloud Run service is public
 reach it. See `infrastructure/README.md` for the one-time bootstrap and the list
 of GitHub secrets. See [ADR-002](#adr-002--cloud-platform).
 
-### Stress test
-Once deployed, the Cloud Run URL goes into `Makefile` line 26 (`STRESS_URL`) and
-`make stress-test` runs against the live service.
+### Deployment & stress test
+The API is **live** at:
+
+> **https://flight-delay-api-n7kpplta7a-uc.a.run.app**
+
+This URL is set in `Makefile` line 26 (`STRESS_URL`). `make stress-test`
+(Locust, 100 users, 60 s) against the live service:
+
+| metric | value |
+|---|---|
+| requests | 8,915 |
+| failures | 1 (**0.01 %**) — a single cold-start 500 |
+| median / avg | 170 ms / 197 ms |
+| p95 / p99 | 290 ms / 390 ms |
+| throughput | ~150 req/s |
+
+Cloud Run autoscaled within `max_instances` and absorbed the load with a
+negligible error rate. (`locust 1.6` requires the pre-2.1 Flask stack, pinned in
+`requirements-test.txt` so the target runs on current package indexes.)
 
 ## Part IV — CI/CD
 
@@ -203,80 +230,125 @@ line 26 (`STRESS_URL`) so `make stress-test` runs against the live service.
 
 ## Architecture Decision Record (ADR) log
 
+Each ADR follows the lightweight **Michael Nygard template** — *Status, Context,
+Decision* (present tense), *Consequences* (positive, trade-offs, and what would
+trigger a re-evaluation).
+
 ### ADR-001 — Production model choice
-**Status:** Accepted · **Context:** Part I model selection.
-The DS left the XGBoost-vs-LogisticRegression choice open. An MLflow experiment
-(`challenge/train.py`) shows the two **balanced** models are equivalent on the
-validation split (delay-class f1 0.364 vs 0.366; recall 0.688 vs 0.688), while
-the unbalanced variants are unusable.
-**Decision:** use **LogisticRegression(class_weight='balanced')** on the top-10
-features.
-**Why:** equal predictive performance, but lighter (no XGBoost in the runtime
-image → faster Cloud Run cold-starts), fully interpretable via coefficients, and
-fewer dependencies to secure/maintain.
-**Consequences:** XGBoost remains a dev-only dependency for the comparison; if
-future data shifts favor it, the registry + `train.py` make swapping the champion
-a one-line change.
+- **Status:** Accepted
+- **Context:** Part I. The DS trained XGBoost and LogisticRegression and left the
+  choice open. We need one production model that meets the test thresholds and is
+  cheap to serve.
+- **Decision:** We use **`LogisticRegression(class_weight='balanced')`** on the
+  top-10 features as the champion.
+- **Consequences:**
+  - *Positive:* equal quality to XGBoost on the validation split (delay-class f1
+    0.364 vs 0.366; ROC-AUC 0.640 vs 0.643) but **~260× smaller** and **~4×
+    faster**, fully interpretable via coefficients, and no XGBoost in the serving
+    image (smaller, faster cold-starts, fewer deps to secure).
+  - *Trade-off:* a linear model can't capture non-linear interactions a boosted
+    tree might; XGBoost stays a dev-only dependency for the comparison.
+  - *Re-evaluate if:* new data/features make XGBoost materially better — swapping
+    the champion is a one-line change via the registry + `train.py`.
 
 ### ADR-002 — Cloud platform
-**Status:** Accepted.
-**Decision:** deploy on **GCP Cloud Run**, provisioned with **Terraform**.
-**Why:** pay-per-use with **scale-to-zero** is the cheapest option for a
-low-traffic API that must stay live ~1 week (a Compute Engine VM bills 24/7 even
-when idle); it provides managed HTTPS and autoscaling out of the box. Terraform
-makes the whole environment reproducible and reviewable, and the same config is
-reused by CD.
-**Consequences:** cold-starts on the first request after idle — mitigated by the
-lean image; `max_instances` caps cost; `min_instances` can be raised if cold
-starts matter during the demo week.
+- **Status:** Accepted
+- **Context:** Part III. The API must stay live ~1 week for low-traffic review,
+  cheaply and with minimal ops.
+- **Decision:** We deploy on **GCP Cloud Run**, provisioned with **Terraform**.
+- **Consequences:**
+  - *Positive:* pay-per-use with **scale-to-zero** (cheapest for intermittent
+    traffic vs a 24/7 VM); managed HTTPS + autoscaling; Terraform makes the env
+    reproducible and is reused by CD.
+  - *Trade-off:* cold-start latency on the first request after idle; a
+    per-request execution model (no long-lived background work).
+  - *Re-evaluate if:* traffic becomes steady/high (a VM or higher `min_instances`
+    may be cheaper) or cold-starts hurt UX → raise `min_instances`.
 
 ### ADR-003 — Secrets & CD authentication
-**Status:** Accepted.
-**Decision:** GitHub Actions authenticates to GCP with **Workload Identity
-Federation** (OIDC) impersonating a least-privilege **deployer** service account;
-the WIF provider is restricted to this repository. **No service-account key** is
-stored. Non-secret config (project id, region, WIF provider name, deployer SA
-email, state bucket) is provided as GitHub Actions secrets/variables; nothing is
-committed.
-**Why:** eliminates long-lived credentials — the highest-value secret to avoid
-leaking. A SA-key JSON (`GCP_SA_KEY`) remains a documented fallback only if WIF
-is unavailable.
-**Consequences:** a one-time bootstrap `terraform apply` (by a project owner)
-must create the WIF pool/provider before CD can authenticate.
-**Least-privilege deploys:** CD runs `terraform apply -refresh=false` to make an
-image-only change, so the deployer SA holds only `run.admin`,
-`iam.serviceAccountUser`, `artifactregistry.writer` (+ object access to the state
-bucket) — it cannot alter IAM, WIF or service accounts. For maximum hardening the
-config could be split into an owner-applied `bootstrap` module and a CD-applied
-`service` module; the `-refresh=false` approach achieves a similar privilege
-boundary without that extra structure.
+- **Status:** Accepted
+- **Context:** Part IV. CD must authenticate to GCP from GitHub Actions in a
+  **public** repo without leaking long-lived credentials.
+- **Decision:** We authenticate via **Workload Identity Federation** (OIDC)
+  impersonating a least-privilege **deployer** SA, with the provider restricted to
+  this repository, and run `terraform apply -refresh=false` (image-only). **No
+  SA key** is stored.
+- **Consequences:**
+  - *Positive:* no long-lived key to leak; the deployer SA is limited to
+    `run.admin` + `iam.serviceAccountUser` + `artifactregistry.writer` (+ state
+    bucket access) and **cannot** alter IAM/WIF/SAs; non-secret config is passed
+    via Actions secrets, nothing committed.
+  - *Trade-off:* a one-time owner bootstrap apply must create WIF before CD works;
+    `-refresh=false` can mask drift in non-image resources.
+  - *Re-evaluate if:* more infra must change via CD → split into an owner-applied
+    `bootstrap` module and a CD-applied `service` module. A SA-key JSON
+    (`GCP_SA_KEY`) is the documented fallback only if WIF is unavailable.
 
 ### ADR-004 — Toolchain: Python 3.10 + uv + ruff
-**Status:** Accepted. The provided dependency pins (pandas 1.3.5, numpy 1.22.4,
-scikit-learn 1.3.0, pydantic v1) are compatible with **Python 3.10**, which we
-pin via `.python-version`. **uv** provides a reproducible env + `uv.lock`;
-**ruff** provides linting/formatting. The `requirements*.txt` files are preserved
-as the canonical install. `anyio` is pinned to the 3.x line because the 4.x
-pytest plugin is incompatible with the pinned `pytest 6.2.5`.
+- **Status:** Accepted
+- **Context:** The provided pins (pandas 1.3.5, numpy 1.22.4, scikit-learn 1.3.0,
+  pydantic v1) constrain the interpreter; we want reproducible envs + linting
+  without breaking the grader make targets.
+- **Decision:** We pin **Python 3.10** (`.python-version`), manage environments
+  with **uv** (+ `uv.lock`), and lint/format with **ruff**; the `requirements*.txt`
+  files remain the canonical install.
+- **Consequences:**
+  - *Positive:* reproducible, fast installs; consistent lint/format; existing make
+    targets unchanged.
+  - *Trade-off:* minor duplication between `pyproject.toml` and `requirements*.txt`;
+    a few compatibility pins are needed (`anyio<4` for pytest 6.2.5, `Jinja2<3.1`
+    for locust 1.6).
+  - *Re-evaluate if:* the dependency pins are modernized — we could move to a newer
+    Python and drop the compatibility pins.
 
 ### ADR-005 — Experiment tracking: local MLflow + semantic versioning
-**Status:** Accepted. A **file/sqlite-backed local MLflow** store (no hosted
-server) is enough for one model: it provides run comparison, plots and a model
-registry with **semantic versions** and aliases. MLflow is a **dev-only**
-dependency and is not shipped in the serving image.
+- **Status:** Accepted
+- **Context:** Part I needs auditable model selection and versioning for a single
+  model, without standing infrastructure.
+- **Decision:** We use a **local sqlite-backed MLflow** store for run comparison,
+  plots and a model registry with semantic versions + aliases; MLflow is
+  **dev-only**.
+- **Consequences:**
+  - *Positive:* reproducible comparison + registry at zero hosting cost; not
+    shipped in the serving image.
+  - *Trade-off:* the local store isn't shared across machines/CI.
+  - *Re-evaluate if:* multiple people/pipelines need shared history → host a
+    tracking server with a database backend.
 
 ### ADR-006 — Model naming & registry convention
-**Status:** Accepted.
-**Decision:** name models `{domain}_{model_type}_v{MAJOR}_{MINOR}_{PATCH}_{stage}`
-(e.g. `flight_delay_logreg_v1_0_0_champion`). In the registry the name is
-**decoupled from the stage**: register `flight_delay_logreg`, carry the SemVer as
-a `semantic_version` tag, and apply the lifecycle stage as an **alias**
-(`@champion`, `@challenger`). Traceability metadata (git commit, dataset hash,
-row count, feature set) is stored as tags, never hardcoded into filenames.
-**Why:** names communicate family/version/status at a glance, prevent ambiguity
-during A/B testing and rollback, and let CI/CD auto-increment the patch on
-retraining without renaming artifacts.
-**Consequences:** the serving artifact (`challenge/model.joblib`) tracks whichever
-version holds the `@champion` alias; CD (LT-MLE-006) can bump the patch
-automatically. This convention is also captured as a reusable project skill
-(`.claude/skills/mlops-model-naming`).
+- **Status:** Accepted
+- **Context:** Production models need names that convey family/version/stage and
+  avoid ambiguity during A/B testing and rollback.
+- **Decision:** We name models
+  `{domain}_{model_type}_v{MAJOR}_{MINOR}_{PATCH}_{stage}` (e.g.
+  `flight_delay_logreg_v1_0_0_champion`); in the registry the name is **decoupled
+  from the stage** (register `flight_delay_logreg`, SemVer as a tag, lifecycle
+  stage as an **alias** `@champion`/`@challenger`); traceability (git commit,
+  dataset hash, rows, feature set) is stored as tags.
+- **Consequences:**
+  - *Positive:* status visible at a glance; safe A/B + rollback via aliases; CD can
+    auto-bump the patch without renaming artifacts; captured as a reusable skill
+    (`.claude/skills/mlops-model-naming`).
+  - *Trade-off:* relies on tooling/discipline to keep tags + alias in sync with
+    `challenge/model.joblib`.
+  - *Re-evaluate if:* adopting a managed registry (e.g. Vertex AI Model Registry)
+    with its own conventions.
+
+---
+
+## Submission
+
+| | |
+|---|---|
+| Name | Braulio Otavalo |
+| Repository | https://github.com/beotavalo/latam-challenge-mle (public) |
+| Live API | https://flight-delay-api-n7kpplta7a-uc.a.run.app |
+| Part I (model) | `make model-test` ✅ — LogisticRegression champion, MLflow-tracked |
+| Part II (API) | `make api-test` ✅ — FastAPI with 400-on-invalid validation |
+| Part III (deploy) | Cloud Run via Terraform ✅ — `make stress-test` 0.01% errors |
+| Part IV (CI/CD) | GitHub Actions CI + WIF-authenticated Terraform CD ✅ |
+
+The challenge is submitted **once** via `POST` to
+`https://advana-challenge-check-api-cr-k4hdbggvoq-uc.a.run.app/software-engineer`
+with the name, mail, `github_url` and `api_url` above, expecting
+`{"status": "OK", "detail": "your request was received"}`.
