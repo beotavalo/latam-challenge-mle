@@ -59,11 +59,22 @@ the challenge explicitly does not ask for model improvements.
 | `logreg-plain-top10`     | 0.013 | 0.025 | 0.640 | 0.282 | 0.95 KB | 0.06 s |
 | `xgboost-plain-top10`    | 0.006 | 0.012 | 0.642 | 0.287 | 241 KB | 0.21 s |
 
-![Model comparison](assets/model_selection/model_comparison.png)
+**Figure 1 — Per-class scores across the four candidates.** The two balanced
+models tie on the delay class; the unbalanced models flatline.
 
-MLflow tracking UI for the `scl-flight-delay--model-selection` experiment:
+![Model comparison bar chart](assets/model_selection/model_comparison.png)
+
+**Figure 2 — MLflow tracking UI** for the `scl-flight-delay--model-selection`
+experiment, showing the four runs, their logged metrics, and the registered
+champion (`flight_delay_logreg` v1.0.0 `@champion`).
 
 ![MLflow runs](assets/model_selection/mlflow_runs.png)
+
+**Figure 3 — Champion confusion matrix** (`logreg-balanced`, validation split):
+class balancing recovers the majority of delayed flights (high class-1 recall) at
+the cost of some false positives — the right trade-off for a delay-warning tool.
+
+![Champion confusion matrix](assets/model_selection/confusion_matrix__logreg-balanced-top10.png)
 
 **Findings (which confirm the DS's conclusions):**
 - Without balancing, both models collapse to predicting "on-time" almost always
